@@ -63,16 +63,33 @@ then
 
   if [[ ! -e ${VERTICA_HOME}/config/admintools.conf ]]
   then
-    echo "Setting up a Vertica cluster from this master node..."
-    ${VERTICA_HOME}/sbin/install_vertica \
+    LICENSE="CE"
+    if [[ -f "/tmp/license.dat" ]]
+    then
+      LICENSE="/tmp/license.dat"
+    fi
+
+    echo "Setting up a Vertica cluster from this master node... License : $LICENSE"
+
+    INSTALL_COMMAND="${VERTICA_HOME}/sbin/install_vertica \
       --hosts "$CLUSTER_NODES" \
       --rpm /tmp/vertica.rpm \
       --no-system-configuration \
-      --license CE \
+      --license "$LICENSE" \
       --accept-eula \
       --dba-user dbadmin \
       --dba-user-password-disabled \
-      --failure-threshold NONE
+      --failure-threshold NONE \
+      --point-to-point \
+      --ignore-aws-instance-type"
+
+    if [[ ! -z "$VERTICA_LARGE_CLUSTER" ]]
+    then
+      INSTALL_COMMAND="$INSTALL_COMMAND --large-cluster $VERTICA_LARGE_CLUSTER"
+    fi
+
+    echo "RUNNING $INSTALL_COMMAND"
+    eval $INSTALL_COMMAND
   fi
   echo "The cluster is set up."
 
