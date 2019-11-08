@@ -6,7 +6,8 @@ ENV VERTICA_HOME=/opt/vertica \
     WITH_VMART=false \
     NODE_TYPE=master \
     CLUSTER_NODES=localhost \
-    GDBSERVER_PORT=2159
+    GDBSERVER_PORT=2159 \
+    ENABLE_WATCHDOG=false
 ARG ENABLE_GDB_DEBUG=true
 
 RUN localedef -i en_US -f UTF-8 en_US.UTF-8
@@ -75,4 +76,4 @@ COPY gdbserverd /usr/local/bin/gdbserverd
 EXPOSE 5433
 EXPOSE ${GDBSERVER_PORT}
 #Starting supervisor
-CMD ["/usr/bin/supervisord", "-n"]
+CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisord.conf"]

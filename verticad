@@ -18,6 +18,32 @@ at_sigint() {
   exit 0
 }
 
+cluster_is_up() {
+  su - dbadmin -c "${VERTICA_HOME}/bin/admintools -t db_status -s UP" | grep -q docker 
+}
+
+start_cluster() {
+  su - dbadmin -c "${VERTICA_HOME}/bin/admintools -t start_db -d docker --force --noprompts"
+}
+
+get_vertica_pid() {
+  pgrep -x vertica
+}
+
+nb_down_nodes() {
+  su - dbadmin -c "/opt/vertica/bin/admintools -t view_cluster -x | grep docker | grep -v UP | wc -l"
+}
+
+restart_down_nodes() {
+  su - dbadmin -c "/opt/vertica/bin/admintools -t view_cluster -x | awk '/docker/ && ! /UP/{print \$3}' | paste -s -d, - | xargs /opt/vertica/bin/admintools -t restart_node -d docker -s "
+}
+
+print_info_message() {
+  echo "---------------------------------------------------------------------------------------------------------------------------------------"
+  cat $1
+  echo "---------------------------------------------------------------------------------------------------------------------------------------"
+}
+
 set -e
 
 if [[ ! -d "${VERTICA_HOME}" ]]
@@ -45,8 +71,6 @@ then
   su - dbadmin -c "mkdir -p ${VERTICA_HOME}/data -m 0755"
 fi
 echo "Data and catalog dirs exist on this node."
-
-
 
 # Everything that gets executed in this block should happen once and only once
 # Hence the concept of 'master' node, that has no meaning in Vertica itself
@@ -107,11 +131,12 @@ then
   fi
   echo "The docker database has been created on the cluster."
 
-  # Starts vertica up if it is not already started
-  if ! su - dbadmin -c "${VERTICA_HOME}/bin/admintools -t db_status -s UP" | grep -q docker
+  # Starts the cluster if not already started
+  echo "Checking cluster status..."
+  if ! cluster_is_up
   then
     echo "Starting Vertica..."
-    su - dbadmin -c "${VERTICA_HOME}/bin/admintools -t start_db -d docker --force --noprompts"
+    start_cluster
   fi
   echo "Vertica is started."
 
@@ -127,11 +152,11 @@ then
   fi
 
   ip=$(hostname --all-ip-addresses | awk '{print $1}')
-  echo "---------------------------------------------------------------------------------------------------------------------------------------"
-  echo "You can now connect to the server '${ip}' on port 5433, using the 'docker' database with the user 'dbadmin' without password."
-  echo "GDBServer can be attached to with \"target extended-remote ${ip}:${GDBSERVER_PORT}\"."
-  echo "You can attach to the Vertica PID using \"attach $(pgrep -x vertica)\"."
-  echo "---------------------------------------------------------------------------------------------------------------------------------------"
+  print_info_message <<EOM
+You can now connect to the server '${ip}' on port 5433, using the 'docker' database with the user 'dbadmin' without password.
+GDBServer can be attached to with "target extended-remote ${ip}:${GDBSERVER_PORT}".
+You can attach to the Vertica PID using "attach $(get_vertica_pid)".
+EOM
 fi
 
 echo "<!--XSUPERVISOR:BEGIN-->VERTICASTART<!--XSUPERVISOR:END-->"
@@ -139,5 +164,20 @@ echo "<!--XSUPERVISOR:BEGIN-->VERTICASTART<!--XSUPERVISOR:END-->"
 # Registers a SIGINT trap and sleeps until CTRL+C is pressed
 trap at_sigint INT
 while true; do
-  sleep 2
+  # If the database should be restarted automatically, check for the status every 5 sec
+  if [ "${NODE_TYPE}" = "master" ] && [ "${ENABLE_WATCHDOG}" = 'true' ]
+  then
+    if ! cluster_is_up
+    then
+      echo "The whole cluster is down! Restarting..."
+      start_cluster && print_info_message <(echo "You can attach to the new Vertica PID using \"attach $(get_vertica_pid) \".")
+    fi
+    nb_down=$(nb_down_nodes)
+    if cluster_is_up && [ $nb_down -gt 0 ]
+    then
+      echo "$nb_down node(s) down! Restarting..."
+      restart_down_nodes && print_info_message <(echo "You can attach to the new Vertica PID using \"attach $(get_vertica_pid) \".")
+    fi
+  fi
+  sleep 5
 done
